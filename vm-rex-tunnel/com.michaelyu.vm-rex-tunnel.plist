@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.michaelyu.rex-ubuntu-vm</string>
+  <key>Label</key><string>com.michaelyu.vm-rex-tunnel</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/michaelyu/.local/bin/rex-ubuntu-vm-tunnel</string>
+    <string>/Users/michaelyu/.local/bin/vm-rex-tunnel</string>
   </array>
   <key>RunAtLoad</key><true/>
   <!-- Parallels writes this log whenever the VM starts, resumes or stops, so
@@ -15,7 +15,7 @@
     <string>/Users/michaelyu/Parallels/Ubuntu Linux.pvm/parallels.log</string>
   </array>
   <key>ThrottleInterval</key><integer>5</integer>
-  <key>StandardOutPath</key><string>/tmp/rex-ubuntu-vm-tunnel.log</string>
-  <key>StandardErrorPath</key><string>/tmp/rex-ubuntu-vm-tunnel.log</string>
+  <key>StandardOutPath</key><string>/tmp/vm-rex-tunnel.log</string>
+  <key>StandardErrorPath</key><string>/tmp/vm-rex-tunnel.log</string>
 </dict>
 </plist>

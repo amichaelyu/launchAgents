@@ -21,7 +21,7 @@ formula), and any notes.
   in the sidebar Favorites. The list is `~/.config/smb-autoreconnect/shares`.
   Installed with Homebrew and run by `brew services`.
 
-- **[rex-ubuntu-vm](rex-ubuntu-vm/)**: tunnels to Rex on my Ubuntu Parallels VM.
+- **[vm-rex-tunnel](vm-rex-tunnel/)**: tunnels to Rex on my Ubuntu Parallels VM.
   While the VM is running, it keeps an SSH tunnel up that forwards the VM's Rex
   server socket to `127.0.0.1:47391` on the Mac. It doesn't poll. launchd starts
   it when the VM's `parallels.log` changes (the VM starting, resuming or
@@ -57,7 +57,7 @@ The rest install from a clone of this repo. `install.sh` symlinks each script
 into `~/.local/bin`, copies its plist into `~/Library/LaunchAgents`, and loads it:
 
 ```sh
-./install.sh audio-sleep-guard rex-ubuntu-vm
+./install.sh audio-sleep-guard vm-rex-tunnel
 ./install.sh --uninstall audio-sleep-guard   # unload and remove
 ```
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Keep the Rex socket tunnel to the Ubuntu Parallels VM up while that VM is running.
-# Run by ~/Library/LaunchAgents/com.michaelyu.rex-ubuntu-vm.plist, which starts it
+# Run by ~/Library/LaunchAgents/com.michaelyu.vm-rex-tunnel.plist, which starts it
 # at login and whenever the VM's parallels.log changes (VM start/resume/stop).
 # It keeps the tunnel up while the VM runs and exits once the VM is down, so
 # nothing polls while the VM is off.

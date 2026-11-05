@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install (or uninstall) the agents that aren't packaged with Homebrew.
-#   ./install.sh audio-sleep-guard rex-ubuntu-vm
-#   ./install.sh --uninstall rex-ubuntu-vm
+#   ./install.sh audio-sleep-guard vm-rex-tunnel
+#   ./install.sh --uninstall vm-rex-tunnel
 # Each folder holds one executable and one LaunchAgent plist. The executable is
 # symlinked into ~/.local/bin (so edits here take effect), and the plist is copied
 # into ~/Library/LaunchAgents and loaded.
