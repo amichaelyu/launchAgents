@@ -1,0 +1,48 @@
+#!/bin/bash
+# Keep the Rex socket tunnel to the Ubuntu Parallels VM up while that VM is running.
+# Run by ~/Library/LaunchAgents/com.michaelyu.rex-ubuntu-vm.plist, which starts it
+# at login and whenever the VM's parallels.log changes (VM start/resume/stop).
+# It keeps the tunnel up while the VM runs and exits once the VM is down, so
+# nothing polls while the VM is off.
+
+VM="{72c1eee6-4ce7-4f57-a068-c668e3bbba00}"  # "Ubuntu Linux"
+
+vm_state() {
+  /usr/local/bin/prlctl status "$VM" 2>/dev/null | awk '{print $NF}'
+}
+
+ssh_pid=
+stop_ssh() {
+  if [ -n "$ssh_pid" ]; then
+    kill "$ssh_pid" 2>/dev/null
+    wait "$ssh_pid" 2>/dev/null
+    ssh_pid=
+  fi
+}
+trap 'stop_ssh; exit 0' TERM INT
+
+# The log changes as the VM starts or resumes, before it reports "running".
+# Give a transitional state up to 90 s to settle.
+for _ in $(seq 45); do
+  case "$(vm_state)" in
+    running|stopped|suspended|paused|"") break ;;
+  esac
+  sleep 2
+done
+
+while [ "$(vm_state)" = running ]; do
+  /usr/bin/ssh -N \
+    -o BatchMode=yes -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L 127.0.0.1:47391:/run/user/1000/rex/server.sock \
+    michaelyu@10.211.55.8 &
+  ssh_pid=$!
+  echo "$(date '+%F %T') VM running, tunnel started (pid $ssh_pid)"
+  # ssh keepalives notice a stopped or suspended VM within ~45 s.
+  wait "$ssh_pid" 2>/dev/null
+  ssh_pid=
+  echo "$(date '+%F %T') tunnel stopped"
+  # Retry while the VM is still up (e.g. sshd not ready yet during boot).
+  sleep 5
+done
+exit 0

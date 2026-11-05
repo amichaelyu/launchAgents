@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.michaelyu.rex-ubuntu-vm</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/michaelyu/.local/bin/rex-ubuntu-vm-tunnel</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <!-- Parallels writes this log whenever the VM starts, resumes or stops, so
+       launchd runs the script on those events instead of it polling. -->
+  <key>WatchPaths</key>
+  <array>
+    <string>/Users/michaelyu/Parallels/Ubuntu Linux.pvm/parallels.log</string>
+  </array>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>/tmp/rex-ubuntu-vm-tunnel.log</string>
+  <key>StandardErrorPath</key><string>/tmp/rex-ubuntu-vm-tunnel.log</string>
+</dict>
+</plist>

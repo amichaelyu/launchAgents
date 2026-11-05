@@ -1,0 +1,4 @@
+# One share URL per line. Credentials come from the Keychain
+# (tick "Remember this password" the first time you connect in Finder).
+smb://user@192.168.0.10/photos
+smb://user@nas.local/media

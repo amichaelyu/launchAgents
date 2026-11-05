@@ -1,0 +1,90 @@
+#!/bin/bash
+# Keep network shares mounted and in Finder's sidebar. Each run:
+#  1. adds SMB/AFP shares you mounted yourself to the config,
+#  2. remounts each configured share whose server is reachable,
+#  3. adds each mounted share to the sidebar Favorites if it's missing.
+set -u
+
+if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then
+  cat <<'EOF'
+usage: smb-autoreconnect
+
+Remounts the shares listed in ~/.config/smb-autoreconnect/shares (one URL per
+line, e.g. smb://user@host/share) when their server is reachable, and keeps them
+in Finder's sidebar. Shares you mount yourself are added to the list.
+Prefix a line with ! to ignore that share. Run it with:
+  brew services start smb-autoreconnect
+EOF
+  exit 0
+fi
+
+CONFIG="${SMB_AUTORECONNECT_CONFIG:-$HOME/.config/smb-autoreconnect/shares}"
+SIDEBAR="$(dirname "$(realpath "$0")")/../libexec/smb-autoreconnect-sidebar"
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
+
+# smb://user@host:445/share or //user@host/share -> host/share, lowercased
+key() {
+  local r=${1#*//} h
+  r=${r#*@}; h=${r%%/*}; h=${h%:*}
+  printf '%s/%s\n' "$h" "${r#*/}" | tr '[:upper:]' '[:lower:]'
+}
+
+# Config lines without comments or blanks.
+entries() { sed -E 's/#.*//; s/^[[:space:]]+//; s/[[:space:]]+$//; /^$/d' "$CONFIG"; }
+
+# Your SMB/AFP mounts as "smb<TAB>user@host/share<TAB>/Volumes/share".
+mounted_shares() {
+  mount | grep "mounted by $(id -un))" | grep -v nobrowse |
+    sed -nE $'s#^//([^ ]+) on (/.*) \\((smb|afp)fs,.*#\\3\t\\1\t\\2#p'
+}
+
+mkdir -p "$(dirname "$CONFIG")"
+touch "$CONFIG"
+
+# 1. Add shares mounted by hand to the config.
+known=$(entries | sed 's/^!//' | while IFS= read -r u; do key "$u"; done)
+while IFS=$'\t' read -r scheme spec _; do
+  [ -n "$scheme" ] || continue
+  k=$(key "//$spec")
+  grep -qxF "$k" <<<"$known" && continue
+  [ -n "$(tail -c1 "$CONFIG")" ] && echo >>"$CONFIG"
+  echo "$scheme://$spec" >>"$CONFIG"
+  known+=$'\n'"$k"
+  log "added $scheme://$spec to $CONFIG"
+done <<<"$(mounted_shares)"
+
+# 2. Remount configured shares whose server answers.
+mounted=$(mounted_shares)
+mounted_keys=$(cut -f2 <<<"$mounted" | while IFS= read -r s; do [ -n "$s" ] && key "//$s"; done)
+wanted=""
+while IFS= read -r url; do
+  [ -n "$url" ] || continue
+  case $url in '!'*) continue ;; esac
+  k=$(key "$url")
+  wanted+="$k"$'\n'
+  grep -qxF "$k" <<<"$mounted_keys" && continue
+
+  scheme=${url%%://*}
+  hostport=${url#*://}; hostport=${hostport%%/*}; hostport=${hostport#*@}
+  case $hostport in
+    *:*) host=${hostport%:*}; port=${hostport##*:} ;;
+    *)   host=$hostport; case $scheme in afp) port=548 ;; *) port=445 ;; esac ;;
+  esac
+  nc -z -G 2 "$host" "$port" >/dev/null 2>&1 || continue
+
+  log "mounting $url"
+  if out=$(osascript -e "mount volume \"$url\"" 2>&1); then
+    log "mounted $url -> $out"
+  else
+    log "failed $url: $out"
+  fi
+done <<<"$(entries)"
+
+# 3. Put each wanted, mounted share in the sidebar if it isn't there.
+[ -x "$SIDEBAR" ] || exit 0
+paths=()
+while IFS=$'\t' read -r _ spec mp; do
+  [ -n "$spec" ] && grep -qxF "$(key "//$spec")" <<<"$wanted" && paths+=("$mp")
+done <<<"$(mounted_shares)"
+[ ${#paths[@]} -gt 0 ] || exit 0
+"$SIDEBAR" "${paths[@]}" | while IFS= read -r p; do log "added $p to the sidebar"; done

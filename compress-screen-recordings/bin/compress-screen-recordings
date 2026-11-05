@@ -1,0 +1,178 @@
+#!/bin/zsh
+# compress-screen-recordings: shrink macOS screen recordings on the Desktop.
+#
+# A recording (named "Screen Recording *.mov" and tagged by ReplayKit, the macOS
+# recorder) is re-encoded with x264 into an .mp4 next to it, and the original is
+# deleted once the copy is checked to be full length. Typically 5-10x smaller.
+#
+# Why a wrapper app: TCC denies a bare zsh started by launchd access to ~/Desktop,
+# and can't even prompt for it. So install-agent builds a tiny AppleScript app that
+# runs this script; macOS asks once to let the app read the Desktop, and the
+# processes it starts (zsh, ffmpeg, rm) inherit that grant.
+
+setopt null_glob extended_glob
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+# This script, as invoked (read here: inside a function $0 is the function name).
+# Not resolved: under Homebrew this is the bin symlink, which survives upgrades.
+self=${0:a}
+
+label=io.github.amichaelyu.compress-screen-recordings
+app=~/Applications/"Compress Screen Recordings.app"
+agent=~/Library/LaunchAgents/$label.plist
+logfile=~/Library/Logs/compress-screen-recordings.log
+state=~/.local/state/compress-screen-recordings
+work=~/Library/Caches/compress-screen-recordings
+
+usage() {
+  cat <<EOF
+usage: compress-screen-recordings <command>
+
+  install-agent    compress new screen recordings on the Desktop automatically
+  uninstall-agent  stop doing that and remove the agent and its wrapper app
+  run              compress the recordings on the Desktop now (what the agent runs)
+  help             show this message
+
+Log: $logfile
+EOF
+}
+
+log() { print -r -- "$(date '+%F %T') $*" }
+duration() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" }
+same_length() { awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; exit !(b > 0 && d < 1 && d > -1) }' }
+
+run() {
+  mkdir -p $state $work
+  exec >>$logfile 2>&1
+  touch $state/failed
+
+  # One run at a time (the agent and a manual run could overlap).
+  zmodload zsh/system
+  touch $state/lock
+  zsystem flock -t 0 $state/lock || exit 0
+
+  # A glob over an unreadable folder is just empty, so check access explicitly.
+  if ! ls ~/Desktop >/dev/null; then
+    log "cannot read ~/Desktop; allow \"Compress Screen Recordings\" in System Settings > Privacy & Security > Files & Folders"
+    exit 1
+  fi
+
+  # Two gates: the macOS recording name here, and the ReplayKit tag below.
+  local in name prev size author out tmp a b
+  for in in ~/Desktop/Screen\ Recording\ *.(#i)mov; do
+    name=${in:t}
+    grep -Fxq -- "$name" $state/failed && continue
+
+    # Wait until the recorder has finished writing: file closed and size steady.
+    prev=-1
+    while true; do
+      size=$(stat -f %z "$in" 2>/dev/null) || continue 2
+      [[ $size == $prev ]] && ! lsof -t -- "$in" >/dev/null && break
+      prev=$size
+      sleep 3
+    done
+
+    # The macOS recorder (ReplayKit) tags every recording; skip anything else that
+    # merely has a matching name. The tag is written when the file is finalized.
+    author=$(ffprobe -v error -show_entries format_tags=com.apple.quicktime.author -of csv=p=0 "$in")
+    if [[ $author != ReplayKitRecording ]]; then
+      log "not a macOS screen recording (author=${author:-none}); skipping $name"
+      print -r -- "$name" >>$state/failed
+      continue
+    fi
+
+    out=${in%.*}.mp4
+    tmp=$work/${name%.*}.mp4
+    log "compressing $name ($(du -h "$in" | cut -f1))"
+    if ! nice -n 10 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$in" \
+        -map 0:v:0 -map '0:a?' -c:v libx264 -crf 23 -preset slow -pix_fmt yuv420p \
+        -c:a aac -b:a 128k -movflags +faststart "$tmp"; then
+      log "ffmpeg failed; keeping $name"
+      print -r -- "$name" >>$state/failed
+      rm -f "$tmp"
+      continue
+    fi
+
+    # Only delete the original once the output is a full-length copy.
+    a=$(duration "$in") b=$(duration "$tmp")
+    if ! same_length "$a" "$b"; then
+      log "length mismatch (${a}s in, ${b}s out); keeping $name"
+      print -r -- "$name" >>$state/failed
+      rm -f "$tmp"
+      continue
+    fi
+
+    touch -r "$in" "$tmp"
+    mv "$tmp" "$out"
+    rm -f -- "$in"
+    log "done: ${out:t} ($(du -h "$out" | cut -f1)); original deleted"
+  done
+}
+
+install_agent() {
+  [[ -x $self ]] || { print -u2 "cannot find this script's path (got $self)"; exit 1 }
+  command -v ffmpeg >/dev/null || { print -u2 "ffmpeg not found; brew install ffmpeg"; exit 1 }
+
+  launchctl bootout gui/$UID/$label 2>/dev/null
+  rm -rf $app
+  mkdir -p ${app:h} ${agent:h}
+
+  # The wrapper: run the script, and log anything that stops it from starting
+  # (an applet's errors are otherwise silent). No Dock icon (LSUIElement).
+  local src=${TMPDIR:-/tmp}/compress-screen-recordings-wrapper.applescript
+  cat >$src <<EOF
+try
+  do shell script quoted form of "$self" & " run"
+on error msg
+  do shell script "echo \"\$(date '+%F %T') wrapper error: \"" & quoted form of msg & " >> " & quoted form of "$logfile"
+end try
+EOF
+  osacompile -o $app $src
+  rm -f $src
+  local info=$app/Contents/Info.plist
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $label" $info 2>/dev/null ||
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $label" $info
+  /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" $info
+  /usr/libexec/PlistBuddy -c "Add :NSDesktopFolderUsageDescription string 'Compresses new screen recordings on the Desktop.'" $info
+  codesign --force --deep -s - $app 2>/dev/null
+
+  # Run the wrapper at login and whenever the Desktop changes.
+  cat >$agent <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$app/Contents/MacOS/applet</string>
+  </array>
+  <key>WatchPaths</key>
+  <array>
+    <string>$HOME/Desktop</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+EOF
+  launchctl bootstrap gui/$UID $agent
+
+  print "Installed. macOS will ask to let \"Compress Screen Recordings\" access your Desktop: click Allow."
+  print "New screen recordings on the Desktop are now compressed automatically. Log: $logfile"
+}
+
+uninstall_agent() {
+  launchctl bootout gui/$UID/$label 2>/dev/null
+  rm -rf $agent $app $state $work
+  print "Removed the agent and its wrapper app."
+}
+
+case ${1:-help} in
+  run) run ;;
+  install-agent) install_agent ;;
+  uninstall-agent) uninstall_agent ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

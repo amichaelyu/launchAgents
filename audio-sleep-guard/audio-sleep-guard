@@ -1,0 +1,28 @@
+#!/bin/bash
+# Put the Mac to sleep when, on battery with the display off, the only thing
+# keeping it awake is an app's audio-output hold (e.g. a browser tab with a
+# silent Web Audio context). Explicit caffeinate holds are respected.
+# Run every 60 s by ~/Library/LaunchAgents/com.michaelyu.audio-sleep-guard.plist.
+
+STATE=/tmp/audio-sleep-guard.count
+LIMIT=2    # consecutive checks (1 min apart) before forcing sleep, i.e. ~1 min
+
+reset() { rm -f "$STATE"; exit 0; }
+
+pmset -g batt | grep -q "'Battery Power'" || reset
+
+a=$(pmset -g assertions)
+# Display on -> powerd holds this assertion.
+echo "$a" | grep -q 'Prevent sleep while display is on' && reset
+# Someone explicitly asked to stay awake (caffeinate, Claude, etc.).
+echo "$a" | grep -qE '\(caffeinate\).*Prevent(User)?(Idle)?SystemSleep' && reset
+# Only act on the audio hold.
+echo "$a" | grep -q 'coreaudiod.*PreventUserIdleSystemSleep' || reset
+
+n=$(( $(cat "$STATE" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$STATE"
+if [ "$n" -ge "$LIMIT" ]; then
+  rm -f "$STATE"
+  echo "$(date '+%F %T') audio hold kept Mac awake ${LIMIT}m on battery with display off; sleeping"
+  pmset sleepnow
+fi
