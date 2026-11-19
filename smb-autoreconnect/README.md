@@ -24,4 +24,8 @@ The list is `~/.config/smb-autoreconnect/shares`, one URL per line
 prefix its line with `!`; deleting the line doesn't work while it's mounted,
 since it would be re-added.
 
+Runs are skipped while the Mac is in a DarkWake (Power Nap / maintenance wake
+during sleep), and each mount gives up after 30 seconds
+(`SMB_AUTORECONNECT_MOUNT_TIMEOUT`), so sleeping mid-mount can't wedge the agent.
+
 The log is at `$(brew --prefix)/var/log/smb-autoreconnect.log`.

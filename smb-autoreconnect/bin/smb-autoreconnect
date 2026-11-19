@@ -19,6 +19,7 @@ EOF
 fi
 
 CONFIG="${SMB_AUTORECONNECT_CONFIG:-$HOME/.config/smb-autoreconnect/shares}"
+MOUNT_TIMEOUT="${SMB_AUTORECONNECT_MOUNT_TIMEOUT:-30}"
 SIDEBAR="$(dirname "$(realpath "$0")")/../libexec/smb-autoreconnect-sidebar"
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*"; }
 
@@ -37,6 +38,12 @@ mounted_shares() {
   mount | grep "mounted by $(id -un))" | grep -v nobrowse |
     sed -nE $'s#^//([^ ]+) on (/.*) \\((smb|afp)fs,.*#\\3\t\\1\t\\2#p'
 }
+
+# Only run when fully awake. During a DarkWake (Power Nap / maintenance wake
+# while asleep) the system drops Graphics and soon sleeps again, which freezes
+# a half-done "mount volume" for good; launchd then never starts another run.
+caps=$(pmset -g systemstate 2>/dev/null | sed -n 's/.*Capabilities are://p')
+[ -n "$caps" ] && [[ $caps != *Graphics* ]] && exit 0
 
 mkdir -p "$(dirname "$CONFIG")"
 touch "$CONFIG"
@@ -72,10 +79,14 @@ while IFS= read -r url; do
   esac
   nc -z -G 2 "$host" "$port" >/dev/null 2>&1 || continue
 
+  # Bound the mount so a hang (sleep mid-mount, server stalls) can't block
+  # every later run.
   log "mounting $url"
-  if out=$(osascript -e "mount volume \"$url\"" 2>&1); then
+  if out=$(timeout -k 5 "$MOUNT_TIMEOUT" osascript -e "mount volume \"$url\"" 2>&1); then
     log "mounted $url -> $out"
   else
+    rc=$?
+    [ "$rc" -ge 124 ] && out="timed out after ${MOUNT_TIMEOUT}s"
     log "failed $url: $out"
   fi
 done <<<"$(entries)"
