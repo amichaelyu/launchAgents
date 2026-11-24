@@ -90,7 +90,8 @@ while IFS=$'\t' read -r scheme spec mp; do
   read -r host port <<<"$(endpoint "$scheme://$spec")"
   reachable "$host" "$port" && continue
   log "unmounting $mp: $host:$port unreachable"
-  if ! out=$(timeout -k 5 15 umount -f "$mp" 2>&1); then
+  # Through Disk Arbitration: umount(8) needs root even for your own mounts.
+  if ! out=$(timeout -k 5 20 diskutil unmount force "$mp" 2>&1); then
     log "failed to unmount $mp: ${out:-timed out}"
   fi
 done <<<"$(mounted_shares)"
