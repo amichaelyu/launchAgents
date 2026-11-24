@@ -5,6 +5,8 @@ whenever its volume is unmounted (off network, Tailscale down, sleep). Every 15
 seconds a LaunchAgent:
 
 - adds any SMB/AFP share you mount yourself to its list,
+- unmounts each listed share whose server has become unreachable, so macOS
+  doesn't pop up "Server connections interrupted" over a dead mount,
 - remounts each listed share as soon as its server is reachable,
 - adds each mounted share to the sidebar Favorites if it isn't there.
 

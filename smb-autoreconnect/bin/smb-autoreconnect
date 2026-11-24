@@ -1,8 +1,9 @@
 #!/bin/bash
 # Keep network shares mounted and in Finder's sidebar. Each run:
 #  1. adds SMB/AFP shares you mounted yourself to the config,
-#  2. remounts each configured share whose server is reachable,
-#  3. adds each mounted share to the sidebar Favorites if it's missing.
+#  2. unmounts each configured share whose server has gone away,
+#  3. remounts each configured share whose server is reachable,
+#  4. adds each mounted share to the sidebar Favorites if it's missing.
 set -u
 
 if [ "${1:-}" = -h ] || [ "${1:-}" = --help ]; then
@@ -28,6 +29,23 @@ key() {
   local r=${1#*//} h
   r=${r#*@}; h=${r%%/*}; h=${h%:*}
   printf '%s/%s\n' "$h" "${r#*/}" | tr '[:upper:]' '[:lower:]'
+}
+
+# scheme://user@host:port/share -> "host port" (default port per scheme)
+endpoint() {
+  local scheme=${1%%://*} hp=${1#*://}
+  hp=${hp%%/*}; hp=${hp#*@}
+  case $hp in
+    *:*) printf '%s %s\n' "${hp%:*}" "${hp##*:}" ;;
+    *)   case $scheme in afp) printf '%s 548\n' "$hp" ;; *) printf '%s 445\n' "$hp" ;; esac ;;
+  esac
+}
+
+# The server accepts a TCP connection. Retried once so a blip doesn't count.
+reachable() {
+  nc -z -G 2 "$1" "$2" >/dev/null 2>&1 && return 0
+  sleep 1
+  nc -z -G 2 "$1" "$2" >/dev/null 2>&1
 }
 
 # Config lines without comments or blanks.
@@ -60,23 +78,31 @@ while IFS=$'\t' read -r scheme spec _; do
   log "added $scheme://$spec to $CONFIG"
 done <<<"$(mounted_shares)"
 
-# 2. Remount configured shares whose server answers.
-mounted=$(mounted_shares)
-mounted_keys=$(cut -f2 <<<"$mounted" | while IFS= read -r s; do [ -n "$s" ] && key "//$s"; done)
-wanted=""
+wanted=$(entries | grep -v '^!' | while IFS= read -r u; do key "$u"; done)
+
+# 2. Unmount wanted shares whose server is unreachable (sleep, leaving the
+# network, Tailscale down). Left mounted, the share stops responding and macOS
+# pops up "Server connections interrupted"; step 3 remounts it once the server
+# is back.
+while IFS=$'\t' read -r scheme spec mp; do
+  [ -n "$spec" ] || continue
+  grep -qxF "$(key "//$spec")" <<<"$wanted" || continue
+  read -r host port <<<"$(endpoint "$scheme://$spec")"
+  reachable "$host" "$port" && continue
+  log "unmounting $mp: $host:$port unreachable"
+  if ! out=$(timeout -k 5 15 umount -f "$mp" 2>&1); then
+    log "failed to unmount $mp: ${out:-timed out}"
+  fi
+done <<<"$(mounted_shares)"
+
+# 3. Remount configured shares whose server answers.
+mounted_keys=$(mounted_shares | cut -f2 | while IFS= read -r s; do [ -n "$s" ] && key "//$s"; done)
 while IFS= read -r url; do
   [ -n "$url" ] || continue
   case $url in '!'*) continue ;; esac
-  k=$(key "$url")
-  wanted+="$k"$'\n'
-  grep -qxF "$k" <<<"$mounted_keys" && continue
+  grep -qxF "$(key "$url")" <<<"$mounted_keys" && continue
 
-  scheme=${url%%://*}
-  hostport=${url#*://}; hostport=${hostport%%/*}; hostport=${hostport#*@}
-  case $hostport in
-    *:*) host=${hostport%:*}; port=${hostport##*:} ;;
-    *)   host=$hostport; case $scheme in afp) port=548 ;; *) port=445 ;; esac ;;
-  esac
+  read -r host port <<<"$(endpoint "$url")"
   nc -z -G 2 "$host" "$port" >/dev/null 2>&1 || continue
 
   # Bound the mount so a hang (sleep mid-mount, server stalls) can't block
@@ -91,7 +117,7 @@ while IFS= read -r url; do
   fi
 done <<<"$(entries)"
 
-# 3. Put each wanted, mounted share in the sidebar if it isn't there.
+# 4. Put each wanted, mounted share in the sidebar if it isn't there.
 [ -x "$SIDEBAR" ] || exit 0
 paths=()
 while IFS=$'\t' read -r _ spec mp; do
